@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from time import sleep
 
+import torch
+from torch.utils.data import DataLoader, Dataset
 
 #from IPython.display import HTML #This is just so we can visualize gifs inside vscode
 
@@ -41,7 +43,21 @@ def load_labels(Problem_Type, Image_Type):
 
 
 def visualize_nii_file(Image_Type, data_path, label_path = None, Problem_Type="CINE", Cmap="grey", image_saved_path=None, video_saved_path=None, frame_delay=50):
+    '''
+    This function visualizes a nii.gz file format, regardless it being a static image or a video.
+    Example usage: visualize_nii_file("4CH", Data_Path, Label_Path)
     
+    :param Image_Type: Type of CINE MRI "4CH", "2CH" or "SAX"
+    :param data_path: Path to the .nii.gz file containing the image data
+    :param label_path: Path to the .nii.gz file containing the mask
+    :param Problem_Type: Problem Type "CINE" or "LGE" but it is most probably CINE
+    :param Cmap: Colormap for matplotlib, default is grey, other options "hot", "jet" and None
+    :param image_saved_path: Path to save resultant visual image
+    :param video_saved_path: Path to save resultant video
+    :param frame_delay: Delay between video frames in milliseconds
+    '''
+
+
     #if a label file path is NOT supplied, alter the logic of the entire function to visualize the data file only
     LBLS = True if label_path else False
     
@@ -61,14 +77,14 @@ def visualize_nii_file(Image_Type, data_path, label_path = None, Problem_Type="C
 
 
     if(not image_saved_path):
-        image_saved_path = f"{Path(data_Path).name}.png"
+        image_saved_path = f"{Path(data_path).name}.png"
     
     if(Path(image_saved_path).suffix != ".png"):
         print("saved image file path must end with .png")
         raise ValueError
 
     if(not video_saved_path):
-        video_saved_path = f"{Path(data_Path).name}.gif"
+        video_saved_path = f"{Path(data_path).name}.gif"
 
     if(Path(video_saved_path).suffix != ".gif"):
         print("saved video file path must end with .gif")
@@ -146,19 +162,68 @@ def visualize_nii_file(Image_Type, data_path, label_path = None, Problem_Type="C
 
 
 
-
-Data_Path = r"C:\Users\ayman.mohamed\Personal\Masters_Security\Deep_Learning\CINE_Cardiac_MRI_With_Deep_Learning\CMR-MULTI\CINE_MULTI\4CH_TR\image\CINE_4CH_001.nii.gz"
-Label_Path = r"C:\Users\ayman.mohamed\Personal\Masters_Security\Deep_Learning\CINE_Cardiac_MRI_With_Deep_Learning\CMR-MULTI\CINE_MULTI\4CH_TR\anno\CINE_4CH_001.nii.gz"
-PROBLEM_TYPE = "CINE"
-IMAGE_TYPE="4CH"
-CMAP = "grey"
-
-image_saved_path = Path(Data_Path).name
-video_saved_path = Path(Label_Path).name
-frame_delay = 50
+def nii_to_tensor(nii_file_path):
+    data = nib.load(nii_file_path).get_fdata()
+    return torch.from_numpy(data)
 
 
+class MRIDataset(Dataset):
+    ''' This class inherits from the Dataset class in pytorch, I only made this class to use DataLoader, nothing else. '''
+    def __init__(self, image_tensors, mask_tensors):
+        self.images = image_tensors
+        self.masks = mask_tensors
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        return self.images[idx], self.masks[idx]
+    
+
+def Create_Dataset (nii_images_path, nii_masks_path):
+    image_nii_files = os.listdir(os.path.abspath(nii_images_path))
+    # I will just make each filename as an absolute path to avoid python errors
+    image_nii_files = [os.path.join(os.path.abspath(nii_images_path), i) for i in image_nii_files]
+
+    #same with mask images
+    mask_nii_files = os.listdir(os.path.abspath(nii_masks_path))
+    mask_nii_files = [os.path.join(os.path.abspath(nii_masks_path), i) for i in mask_nii_files]
+
+    # For every file in the list of nii files, will convert it to a tensor and append them to a giant list
+    list_image_tensors = []
+    list_mask_tensors = []
+
+    for image_path in image_nii_files:
+        new_tensor = nii_to_tensor(image_path)
+        list_image_tensors.append(new_tensor)
+
+    for image_path in mask_nii_files:
+        new_tensor = nii_to_tensor(image_path)
+        list_mask_tensors.append(new_tensor)
+
+    #sanity check, image tensors and mask tensors should be of equal number
+    print(len(list_image_tensors))
+    print(len(list_mask_tensors))
+    assert len(list_image_tensors) == len(list_mask_tensors)
+
+    return MRIDataset(list_image_tensors, list_mask_tensors)
 
 
-#example usage
-visualize_nii_file("4CH", Data_Path, Label_Path)
+
+
+
+# Data_Path = r"C:\Users\ayman.mohamed\Personal\Masters_Security\Deep_Learning\CINE_Cardiac_MRI_With_Deep_Learning\CMR-MULTI\CINE_MULTI\4CH_TR\image\CINE_4CH_001.nii.gz"
+# Label_Path = r"C:\Users\ayman.mohamed\Personal\Masters_Security\Deep_Learning\CINE_Cardiac_MRI_With_Deep_Learning\CMR-MULTI\CINE_MULTI\4CH_TR\anno\CINE_4CH_001.nii.gz"
+# PROBLEM_TYPE = "CINE"
+# IMAGE_TYPE="4CH"
+# CMAP = "grey"
+
+# image_saved_path = Path(Data_Path).name
+# video_saved_path = Path(Label_Path).name
+# frame_delay = 50
+
+
+
+
+# #example usage
+# visualize_nii_file("4CH", Data_Path, Label_Path)
