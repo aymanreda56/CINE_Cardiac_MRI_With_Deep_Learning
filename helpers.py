@@ -22,7 +22,12 @@ import nibabel as nib
 
 
 
-def load_labels(Problem_Type, Image_Type):
+def load_labels(Problem_Type, Image_Type) -> dict:
+    '''Helper function to return a dictionary of the labels instead of writing them by hand
+    :param Problem_Type: "CINE" or "LGE", mostly we will use CINE.
+    :param Image_Type: "4CH" or "2CH" or "SAX"
+    
+    '''
     if Problem_Type == "CINE":
         LBLS_2CH = {0: "[0] none", 1 : "[1] Left Ventricle Cavity", 2: "[2] Left Ventricle Myocardium"}
         LBLS_4CH = {0: "[0] none", 1 : "[1] Left Ventricle Cavity", 2 : "[2] Left Ventricle Myocardium", 3 : "[3] Right Ventricle Cavity", 4 : "[4] Right Atrium", 5 : "[5] Left Atrium"}
@@ -180,7 +185,14 @@ class MRIDataset(Dataset):
         return self.images[idx], self.masks[idx]
     
 
-def Create_Dataset (nii_images_path, nii_masks_path):
+def Create_Dataset (nii_images_path, nii_masks_path, test_data_percentage=0.3):
+    '''
+    Dataset creator, it reads all files in the given pathes, converts them to tensors and returns 2 instances of torch.Datasets corresponding to a training set and a test set.
+    
+    :param nii_images_path: Path to the folder containing all images data
+    :param nii_masks_path: Path to the folder containing all masked data
+    :param test_data_percentage: Percentage of test set for splitting
+    '''
     image_nii_files = os.listdir(os.path.abspath(nii_images_path))
     # I will just make each filename as an absolute path to avoid python errors
     image_nii_files = [os.path.join(os.path.abspath(nii_images_path), i) for i in image_nii_files]
@@ -193,7 +205,10 @@ def Create_Dataset (nii_images_path, nii_masks_path):
     list_image_tensors = []
     list_mask_tensors = []
 
-    for image_path in image_nii_files:
+    test_image_tensors = []
+    test_mask_tensors = []
+
+    for i, image_path in enumerate(image_nii_files):
         new_tensor = nii_to_tensor(image_path)
         list_image_tensors.append(new_tensor)
 
@@ -202,11 +217,26 @@ def Create_Dataset (nii_images_path, nii_masks_path):
         list_mask_tensors.append(new_tensor)
 
     #sanity check, image tensors and mask tensors should be of equal number
-    print(len(list_image_tensors))
-    print(len(list_mask_tensors))
+    print(f"All dataset is of length {len(list_image_tensors)}", sep=None)
+    print(f"With Masks of{len(list_mask_tensors)}")
+
     assert len(list_image_tensors) == len(list_mask_tensors)
 
-    return MRIDataset(list_image_tensors, list_mask_tensors)
+    print(f"Splitting data to {1-test_data_percentage} for training and {test_data_percentage} for testing...")
+
+    
+    split_idx = int(len(list_image_tensors) * test_data_percentage)
+
+    test_image_tensors = list_image_tensors[:split_idx]
+    list_image_tensors = list_image_tensors[split_idx:]
+
+    test_mask_tensors = list_mask_tensors[:split_idx]
+    list_mask_tensors = list_mask_tensors[split_idx:]
+
+    print(f"Training with {len(list_image_tensors)}:{len(list_mask_tensors)}")
+    print(f"Testing with {len(test_image_tensors)}:{len(test_mask_tensors)}")
+
+    return MRIDataset(list_image_tensors, list_mask_tensors),  MRIDataset(test_image_tensors, test_mask_tensors)
 
 
 
