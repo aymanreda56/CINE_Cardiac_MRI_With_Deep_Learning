@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from time import sleep
 
+import numpy as np
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 
@@ -168,7 +170,7 @@ def visualize_nii_file(Image_Type, data_path, label_path = None, Problem_Type="C
 
 
 def nii_to_tensor(nii_file_path):
-    data = nib.load(nii_file_path).get_fdata()
+    data = nib.load(nii_file_path).get_fdata().astype(np.float32)
     return torch.from_numpy(data)
 
 
@@ -238,6 +240,73 @@ def Create_Dataset (nii_images_path, nii_masks_path, test_data_percentage=0.3):
 
     return MRIDataset(list_image_tensors, list_mask_tensors),  MRIDataset(test_image_tensors, test_mask_tensors)
 
+
+
+
+def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3):
+    '''
+    This function creates a dataset of 2D images, each video is dissected into standalone images and returns 2 Dataset objects
+    Each dataset has a shape of (C, 1, w, h) where C is the count of the images, w and h are width and height, the 1 is simply a dummy dimension for the CNN to train effectively.
+    
+
+    :param nii_images_path: Description
+    :param nii_masks_path: Description
+    :param test_data_percentage: Description
+    '''
+    image_nii_files = os.listdir(os.path.abspath(nii_images_path))
+    # I will just make each filename as an absolute path to avoid python errors
+    image_nii_files = [os.path.join(os.path.abspath(nii_images_path), i) for i in image_nii_files]
+
+    #same with mask images
+    mask_nii_files = os.listdir(os.path.abspath(nii_masks_path))
+    mask_nii_files = [os.path.join(os.path.abspath(nii_masks_path), i) for i in mask_nii_files]
+
+    # For every file in the list of nii files, will convert it to a tensor and append them to a giant list
+    list_image_tensors = []
+    list_mask_tensors = []
+
+    for i, image_path in enumerate(image_nii_files):
+        new_tensor = nii_to_tensor(image_path)
+        
+        for j in range(new_tensor.shape[2]):
+            tensor_2d = new_tensor[:, :, j]      # (H, W) the jth slice/frame
+            tensor_2d = tensor_2d.unsqueeze(0)    # (1, H, W) added dummy dim
+            list_image_tensors.append(tensor_2d)
+
+
+    for image_path in mask_nii_files:
+        new_tensor = nii_to_tensor(image_path)
+        for j in range(new_tensor.shape[2]):
+            tensor_2d = new_tensor[:, :, j]      # (H, W) the jth slice/frame
+            tensor_2d = tensor_2d.unsqueeze(0)    # (1, H, W) added dummy dim
+            list_mask_tensors.append(tensor_2d)
+
+    
+    #Concat all tensors into 1 VERY BIG TENSOR of a shape (C, 1, w, h) where C is their count, w is the width and h is the height
+    image_tensors = torch.stack(list_image_tensors, dim=0)
+    mask_tensors = torch.stack(list_mask_tensors, dim=0)
+
+    #sanity check, image tensors and mask tensors should be of equal number
+    print(f"All dataset is of length {image_tensors.shape} ", sep=None)
+    print(f"With Masks of {mask_tensors.shape}")
+
+    assert len(list_image_tensors) == len(list_mask_tensors)
+
+    print(f"Splitting data to {1-test_data_percentage} for training and {test_data_percentage} for testing...")
+
+    
+    split_idx = int(len(image_tensors) * test_data_percentage)
+
+    train_images = image_tensors[:split_idx]
+    train_masks  = mask_tensors[:split_idx]
+
+    test_images  = image_tensors[split_idx:]
+    test_masks   = mask_tensors[split_idx:]
+
+    print(f"Training with {len(train_images)}:{len(train_masks)}")
+    print(f"Testing with {len(test_images)}:{len(test_masks)}")
+
+    return MRIDataset(train_images, train_masks),  MRIDataset(test_images, test_masks)
 
 
 
