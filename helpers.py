@@ -6,13 +6,12 @@ import matplotlib.animation as animation
 import os
 from pathlib import Path
 from time import sleep
-
+from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
 import numpy as np
 
 import torch
 from torch.utils.data import DataLoader, Dataset
-
-#from IPython.display import HTML #This is just so we can visualize gifs inside vscode
 
 
 
@@ -167,24 +166,61 @@ def visualize_nii_file(Image_Type, data_path, label_path = None, Problem_Type="C
     img.show()
     
 
+def recursive_flatten (input_list) -> list:
+    '''Flattens a nested list to a single flat list containing all data'''
+    if type(input_list) not in [list, np.ndarray]: #base case
+        return input_list
+    
+    prev_list = []
+    for element in input_list:
+        if type(element) not in [list, np.ndarray]:
+            prev_list.append(element)
+        else:
+            prev_list += recursive_flatten(element)
+    
+    return prev_list
 
 
-def nii_to_tensor(nii_file_path):
-    data = nib.load(nii_file_path).get_fdata().astype(np.float32)
+def get_all_np_images(dataset_path) -> list:
+    ''' returns a list containing images in np format '''
+    image_nii_files = os.listdir(os.path.abspath(dataset_path))
+    # I will just make each filename as an absolute path to avoid python errors
+    image_nii_files = [os.path.join(os.path.abspath(dataset_path), i) for i in image_nii_files]
+
+    all_images = []
+    for i, image_path in enumerate(image_nii_files):
+        np_img = nib.load(image_path).get_fdata()
+        all_images.append(np_img)
+    
+    return all_images
+
+
+
+def nii_to_tensor(nii_file_path, dtype=np.int16):
+    data = nib.load(nii_file_path).get_fdata().astype(dtype)
     return torch.from_numpy(data)
 
 
 class MRIDataset(Dataset):
     ''' This class inherits from the Dataset class in pytorch, I only made this class to use DataLoader, nothing else. '''
-    def __init__(self, image_tensors, mask_tensors):
+    def __init__(self, image_tensors, mask_tensors, scaler=None):
         self.images = image_tensors
         self.masks = mask_tensors
+        self.scaler = scaler
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
-        return self.images[idx], self.masks[idx]
+        img = self.images[idx]
+        if self.scaler is not None:
+            img, _ = clip_outliers_from_img(self.images[idx])
+            img_flat = img.reshape(-1, 1)
+            img_scaled = self.scaler.transform(img_flat)
+            img = img_scaled.reshape(img.shape)
+        if(type(img) == torch.Tensor):
+            return img.float(), self.masks[idx]
+        else: return img.astype(np.float32), self.masks[idx]
     
 
 def Create_Dataset (nii_images_path, nii_masks_path, test_data_percentage=0.3):
@@ -195,12 +231,12 @@ def Create_Dataset (nii_images_path, nii_masks_path, test_data_percentage=0.3):
     :param nii_masks_path: Path to the folder containing all masked data
     :param test_data_percentage: Percentage of test set for splitting
     '''
-    image_nii_files = os.listdir(os.path.abspath(nii_images_path))
+    image_nii_files = sorted(os.listdir(os.path.abspath(nii_images_path)))
     # I will just make each filename as an absolute path to avoid python errors
     image_nii_files = [os.path.join(os.path.abspath(nii_images_path), i) for i in image_nii_files]
 
     #same with mask images
-    mask_nii_files = os.listdir(os.path.abspath(nii_masks_path))
+    mask_nii_files = sorted(os.listdir(os.path.abspath(nii_masks_path)))
     mask_nii_files = [os.path.join(os.path.abspath(nii_masks_path), i) for i in mask_nii_files]
 
     # For every file in the list of nii files, will convert it to a tensor and append them to a giant list
@@ -215,7 +251,7 @@ def Create_Dataset (nii_images_path, nii_masks_path, test_data_percentage=0.3):
         list_image_tensors.append(new_tensor)
 
     for image_path in mask_nii_files:
-        new_tensor = nii_to_tensor(image_path)
+        new_tensor = nii_to_tensor(image_path, dtype=np.int64)
         list_mask_tensors.append(new_tensor)
 
     #sanity check, image tensors and mask tensors should be of equal number
@@ -243,7 +279,7 @@ def Create_Dataset (nii_images_path, nii_masks_path, test_data_percentage=0.3):
 
 
 
-def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3):
+def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3, scaler=None):
     '''
     This function creates a dataset of 2D images, each video is dissected into standalone images and returns 2 Dataset objects
     Each dataset has a shape of (C, 1, w, h) where C is the count of the images, w and h are width and height, the 1 is simply a dummy dimension for the CNN to train effectively.
@@ -253,12 +289,12 @@ def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3)
     :param nii_masks_path: Description
     :param test_data_percentage: Description
     '''
-    image_nii_files = os.listdir(os.path.abspath(nii_images_path))
+    image_nii_files = sorted(os.listdir(os.path.abspath(nii_images_path)))
     # I will just make each filename as an absolute path to avoid python errors
     image_nii_files = [os.path.join(os.path.abspath(nii_images_path), i) for i in image_nii_files]
 
     #same with mask images
-    mask_nii_files = os.listdir(os.path.abspath(nii_masks_path))
+    mask_nii_files = sorted(os.listdir(os.path.abspath(nii_masks_path)))
     mask_nii_files = [os.path.join(os.path.abspath(nii_masks_path), i) for i in mask_nii_files]
 
     # For every file in the list of nii files, will convert it to a tensor and append them to a giant list
@@ -297,16 +333,57 @@ def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3)
     
     split_idx = int(len(image_tensors) * test_data_percentage)
 
-    train_images = image_tensors[:split_idx]
-    train_masks  = mask_tensors[:split_idx]
+    train_images = image_tensors[split_idx:]
+    train_masks  = mask_tensors[split_idx:]
 
-    test_images  = image_tensors[split_idx:]
-    test_masks   = mask_tensors[split_idx:]
+    test_images  = image_tensors[:split_idx]
+    test_masks   = mask_tensors[:split_idx]
 
     print(f"Training with {len(train_images)}:{len(train_masks)}")
     print(f"Testing with {len(test_images)}:{len(test_masks)}")
 
-    return MRIDataset(train_images, train_masks),  MRIDataset(test_images, test_masks)
+    return MRIDataset(train_images, train_masks, scaler),  MRIDataset(test_images, test_masks, None)
+
+
+
+
+
+
+
+
+def clip_outliers_from_img(image:np.ndarray):
+    original_shape = image.shape
+    p1, p99 = np.percentile(image.reshape(-1, 1), [1, 99])
+    pixels = np.clip(image.reshape(-1, 1), p1, p99)
+    clipped_img = pixels.reshape(original_shape)
+    return clipped_img, pixels
+
+
+
+def train_scaler(all_images):
+    """Trains a Z-score scaler after clipping values, given all images' data in a list"""
+
+    all_pixels_after_clipping = np.array([]).reshape(-1, 1)
+    clipped_images = []
+    for img in tqdm(all_images):
+        clipped_img, pixels = clip_outliers_from_img(img)
+        clipped_images.append(clipped_img)
+        all_pixels_after_clipping = np.concatenate((all_pixels_after_clipping, pixels))
+
+    print(f"finished clipping {len(all_images)} images")
+
+    #all_pixels_after_clipping = helpers.recursive_flatten(clipped_images)
+    all_pixels_after_clipping = np.array(all_pixels_after_clipping).reshape(-1, 1)
+
+    print(f"finished flattening {len(all_images)} images to {len(all_pixels_after_clipping)} pixels")
+
+    zscaler_clipped = StandardScaler()
+    zscaler_clipped = zscaler_clipped.fit(all_pixels_after_clipping)
+
+    print(f"finished training the scaler")
+
+    return zscaler_clipped, clipped_images
+
 
 
 
