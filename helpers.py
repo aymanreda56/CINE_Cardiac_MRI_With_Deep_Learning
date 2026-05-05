@@ -10,6 +10,9 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 import numpy as np
 
+
+import sklearn.metrics as mtr
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 
@@ -279,73 +282,71 @@ def Create_Dataset (nii_images_path, nii_masks_path, test_data_percentage=0.3):
 
 
 
-def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3, scaler=None):
+def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3, val_data_percentage=0.15, scaler=None):
     '''
-    This function creates a dataset of 2D images, each video is dissected into standalone images and returns 2 Dataset objects
-    Each dataset has a shape of (C, 1, w, h) where C is the count of the images, w and h are width and height, the 1 is simply a dummy dimension for the CNN to train effectively.
-    
+    This function creates a dataset of 2D images, each video is dissected into standalone images
+    and returns 3 Dataset objects: train, val, test.
+    Each dataset has a shape of (C, 1, w, h) where C is the count of the images, w and h are
+    width and height, the 1 is simply a dummy dimension for the CNN to train effectively.
 
-    :param nii_images_path: Description
-    :param nii_masks_path: Description
-    :param test_data_percentage: Description
+    :param nii_images_path: Path to folder containing image .nii.gz files
+    :param nii_masks_path: Path to folder containing annotation .nii.gz files
+    :param test_data_percentage: Fraction of data reserved for the test set
+    :param val_data_percentage: Fraction of data reserved for the validation set
+    :param scaler: Optional fitted scaler applied to training images only
     '''
     image_nii_files = sorted(os.listdir(os.path.abspath(nii_images_path)))
-    # I will just make each filename as an absolute path to avoid python errors
     image_nii_files = [os.path.join(os.path.abspath(nii_images_path), i) for i in image_nii_files]
 
-    #same with mask images
     mask_nii_files = sorted(os.listdir(os.path.abspath(nii_masks_path)))
     mask_nii_files = [os.path.join(os.path.abspath(nii_masks_path), i) for i in mask_nii_files]
 
-    # For every file in the list of nii files, will convert it to a tensor and append them to a giant list
     list_image_tensors = []
     list_mask_tensors = []
 
-    for i, image_path in enumerate(image_nii_files):
+    for image_path in image_nii_files:
         new_tensor = nii_to_tensor(image_path)
-        
         for j in range(new_tensor.shape[2]):
-            tensor_2d = new_tensor[:, :, j]      # (H, W) the jth slice/frame
-            tensor_2d = tensor_2d.unsqueeze(0)    # (1, H, W) added dummy dim
+            tensor_2d = new_tensor[:, :, j]      # (H, W)
+            tensor_2d = tensor_2d.unsqueeze(0)    # (1, H, W)
             list_image_tensors.append(tensor_2d)
-
 
     for image_path in mask_nii_files:
         new_tensor = nii_to_tensor(image_path)
         for j in range(new_tensor.shape[2]):
-            tensor_2d = new_tensor[:, :, j]      # (H, W) the jth slice/frame
-            tensor_2d = tensor_2d.unsqueeze(0)    # (1, H, W) added dummy dim
+            tensor_2d = new_tensor[:, :, j]
+            tensor_2d = tensor_2d.unsqueeze(0)
             list_mask_tensors.append(tensor_2d)
 
-    
-    #Concat all tensors into 1 VERY BIG TENSOR of a shape (C, 1, w, h) where C is their count, w is the width and h is the height
     image_tensors = torch.stack(list_image_tensors, dim=0)
-    mask_tensors = torch.stack(list_mask_tensors, dim=0)
+    mask_tensors  = torch.stack(list_mask_tensors,  dim=0)
 
-    #sanity check, image tensors and mask tensors should be of equal number
     print(f"All dataset is of length {image_tensors.shape} ", sep=None)
     print(f"With Masks of {mask_tensors.shape}")
 
     assert len(list_image_tensors) == len(list_mask_tensors)
 
-    print(f"Splitting data to {1-test_data_percentage} for training and {test_data_percentage} for testing...")
+    n = len(image_tensors)
+    test_idx = int(n * test_data_percentage)
+    val_idx  = test_idx + int(n * val_data_percentage)
 
-    
-    split_idx = int(len(image_tensors) * test_data_percentage)
+    # Layout: [0 … test_idx) = test | [test_idx … val_idx) = val | [val_idx …) = train
+    test_images  = image_tensors[:test_idx]
+    test_masks   = mask_tensors[:test_idx]
 
-    train_images = image_tensors[split_idx:]
-    train_masks  = mask_tensors[split_idx:]
+    val_images   = image_tensors[test_idx:val_idx]
+    val_masks    = mask_tensors[test_idx:val_idx]
 
-    test_images  = image_tensors[:split_idx]
-    test_masks   = mask_tensors[:split_idx]
+    train_images = image_tensors[val_idx:]
+    train_masks  = mask_tensors[val_idx:]
 
-    print(f"Training with {len(train_images)}:{len(train_masks)}")
-    print(f"Testing with {len(test_images)}:{len(test_masks)}")
+    print(f"Splitting — train: {len(train_images)}  val: {len(val_images)}  test: {len(test_images)}")
 
-    return MRIDataset(train_images, train_masks, scaler),  MRIDataset(test_images, test_masks, None)
-
-
-
+    return (
+        MRIDataset(train_images, train_masks, scaler),
+        MRIDataset(val_images,   val_masks,   None),
+        MRIDataset(test_images,  test_masks,  None),
+    )
 
 
 
@@ -360,7 +361,9 @@ def clip_outliers_from_img(image:np.ndarray):
 
 
 
-def train_scaler(all_images):
+
+
+def train_scaler(all_images, scaler = StandardScaler):
     """Trains a Z-score scaler after clipping values, given all images' data in a list"""
 
     all_pixels_after_clipping = np.array([]).reshape(-1, 1)
@@ -377,13 +380,80 @@ def train_scaler(all_images):
 
     print(f"finished flattening {len(all_images)} images to {len(all_pixels_after_clipping)} pixels")
 
-    zscaler_clipped = StandardScaler()
+    zscaler_clipped = scaler()
     zscaler_clipped = zscaler_clipped.fit(all_pixels_after_clipping)
 
     print(f"finished training the scaler")
 
     return zscaler_clipped, clipped_images
 
+
+# def dice_coeff(y_true:np.ndarray, y_pred:np.ndarray, num_classes:int, smooth:float=1e7):
+   
+#     one_hot_y_true = np.eye(num_classes)[y_true] #(B, W, H, C)
+#     one_hot_y_true = np.transpose(one_hot_y_true, (0, 3, 1, 2))
+
+#     one_hot_y_pred = np.eye(num_classes)[y_pred] #(B, W, H, C)
+#     one_hot_y_pred = np.transpose(one_hot_y_pred, (0, 3, 1, 2))
+
+#     # Ignore background
+#     y_true_fg = one_hot_y_true[:, 1:, :, :]
+#     y_pred_fg = one_hot_y_pred[:, 1:, :, :]
+
+#     # Flatten
+#     y_true_f = y_true_fg.reshape(y_true_fg.shape[0], -1)
+#     y_pred_f = y_pred_fg.reshape(y_pred_fg.shape[0], -1)
+
+#     # Compute Dice
+#     intersect = np.sum(y_true_f * y_pred_f, axis=1)
+#     denom = np.sum(y_true_f + y_pred_f, axis=1)
+
+#     dice = (2. * intersect) / (denom + smooth)
+
+#     return np.mean(dice)
+
+
+
+# def validate(y_true:np.ndarray, y_pred:np.ndarray, num_classes:int):
+#     dice_acc = dice_coeff(y_true, y_pred, num_classes=num_classes, smooth=1e7)
+#     y_true_flat = y_true.ravel()
+#     y_pred_flat = y_pred.ravel()
+#     acc = mtr.accuracy_score(y_true=y_true_flat, y_pred=y_pred_flat)
+#     f1 = mtr.f1_score(y_true=y_true_flat, y_pred=y_pred_flat, average='macro', zero_division=0)
+
+#     return dice_acc, acc, f1
+
+
+
+def dice_coeff(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int, smooth: float = 1e-6) -> float:
+    total_dice = 0.0
+    num_fg_classes = 0
+
+    for c in range(1, num_classes):  # skip background (class 0)
+        true_c = (y_true == c)       # bool mask (N, H, W) — 1 bit per pixel
+        pred_c = (y_pred == c)
+
+        intersect = np.count_nonzero(true_c & pred_c)
+        denom     = np.count_nonzero(true_c) + np.count_nonzero(pred_c)
+
+        total_dice  += (2.0 * intersect) / (denom + smooth)
+        num_fg_classes += 1
+
+    return total_dice / num_fg_classes
+
+
+def validate(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int):
+    dice_acc = dice_coeff(y_true, y_pred, num_classes=num_classes)
+
+    # Flatten (N, H, W) -> (N*H*W,) for sklearn
+    y_true_flat = y_true.ravel()
+    y_pred_flat = y_pred.ravel()
+
+    acc = mtr.accuracy_score(y_true=y_true_flat, y_pred=y_pred_flat)
+    f1  = mtr.f1_score(y_true=y_true_flat, y_pred=y_pred_flat,
+                       average='macro', zero_division=0)
+
+    return dice_acc, acc, f1
 
 
 
