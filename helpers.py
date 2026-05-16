@@ -6,7 +6,7 @@ import matplotlib.animation as animation
 import os
 from pathlib import Path
 from time import sleep
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from tqdm import tqdm
 import numpy as np
 
@@ -206,10 +206,11 @@ def nii_to_tensor(nii_file_path, dtype=np.int16):
 
 class MRIDataset(Dataset):
     ''' This class inherits from the Dataset class in pytorch, I only made this class to use DataLoader, nothing else. '''
-    def __init__(self, image_tensors, mask_tensors, scaler=None):
+    def __init__(self, image_tensors, mask_tensors, scaler=None, clip=False):
         self.images = image_tensors
         self.masks = mask_tensors
         self.scaler = scaler
+        self.clip = clip
 
     def __len__(self):
         return len(self.images)
@@ -217,9 +218,13 @@ class MRIDataset(Dataset):
     def __getitem__(self, idx):
         img = self.images[idx]
         if self.scaler is not None:
-            img, _ = clip_outliers_from_img(self.images[idx])
+            if self.clip:
+                img, _ = clip_outliers_from_img(self.images[idx])
             img_flat = img.reshape(-1, 1)
-            img_scaled = self.scaler.transform(img_flat)
+            if isinstance(self.scaler, MinMaxScaler): #MinMax scaler is fitted for each image locally
+                img_scaled = self.scaler.fit_transform(img_flat)
+            else:
+                img_scaled = self.scaler.transform(img_flat)
             img = img_scaled.reshape(img.shape)
         if(type(img) == torch.Tensor):
             return img.float(), self.masks[idx]
@@ -282,7 +287,7 @@ def Create_Dataset (nii_images_path, nii_masks_path, test_data_percentage=0.3):
 
 
 
-def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3, val_data_percentage=0.15, scaler=None):
+def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3, val_data_percentage=0.15, scaler=None, clip = False):
     '''
     This function creates a dataset of 2D images, each video is dissected into standalone images
     and returns 3 Dataset objects: train, val, test.
@@ -343,18 +348,19 @@ def create_2d_dataset(nii_images_path, nii_masks_path, test_data_percentage=0.3,
     print(f"Splitting — train: {len(train_images)}  val: {len(val_images)}  test: {len(test_images)}")
 
     return (
-        MRIDataset(train_images, train_masks, scaler),
-        MRIDataset(val_images,   val_masks,   None),
-        MRIDataset(test_images,  test_masks,  None),
+        MRIDataset(train_images, train_masks, scaler, clip=clip),
+        MRIDataset(val_images,   val_masks,   scaler, clip=clip),
+        MRIDataset(test_images,  test_masks,  scaler, clip=clip),
     )
 
 
 
 
 
-def clip_outliers_from_img(image:np.ndarray):
+def clip_outliers_from_img(image:np.ndarray, clip_lower_percentile=False):
     original_shape = image.shape
     p1, p99 = np.percentile(image.reshape(-1, 1), [1, 99])
+    p1 = p1 if clip_lower_percentile else None
     pixels = np.clip(image.reshape(-1, 1), p1, p99)
     clipped_img = pixels.reshape(original_shape)
     return clipped_img, pixels
@@ -363,15 +369,19 @@ def clip_outliers_from_img(image:np.ndarray):
 
 
 
-def train_scaler(all_images, scaler = StandardScaler):
+def train_scaler(all_images, scaler = StandardScaler, clip=False):
     """Trains a Z-score scaler after clipping values, given all images' data in a list"""
 
     all_pixels_after_clipping = np.array([]).reshape(-1, 1)
     clipped_images = []
     for img in tqdm(all_images):
-        clipped_img, pixels = clip_outliers_from_img(img)
+        pixels = img.reshape(-1, 1)
+        clipped_img = img
+        if(clip):
+            clipped_img, pixels = clip_outliers_from_img(img)
         clipped_images.append(clipped_img)
         all_pixels_after_clipping = np.concatenate((all_pixels_after_clipping, pixels))
+    
 
     print(f"finished clipping {len(all_images)} images")
 
