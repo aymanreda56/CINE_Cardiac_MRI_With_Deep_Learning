@@ -1,0 +1,27 @@
+fixed learning rate: 0.00005
+
+epochs: 75
+
+loss function: Cross Entropy + Dice Loss... with weights [0.1, 1.0, 1.0, 1.0, 1.0, 1.0] to classes where the 0th class is the background
+
+Using Standard Scaler (without clipping)
+
+test set: 30%
+
+val set: 15%
+
+
+
+Test — dice: 0.6846  acc: 0.8742  f1: 0.7266
+              precision    recall  f1-score   support
+
+           0       0.95      0.92      0.94  24793216
+           1       0.77      0.79      0.78   2294082
+           2       0.48      0.55      0.51   1420128
+           3       0.50      0.80      0.62   1403608
+           4       0.70      0.68      0.69   1118066
+           5       0.88      0.78      0.83   1505090
+
+    accuracy                           0.87  32534190
+   macro avg       0.71      0.75      0.73  32534190
+weighted avg       0.89      0.87      0.88  32534190

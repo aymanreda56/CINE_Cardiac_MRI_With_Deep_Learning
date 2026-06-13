@@ -4,18 +4,19 @@ task_categories:
 - image-segmentation
 tags:
 - medical
+- dataset
 size_categories:
 - n<1K
 extra_gated_fields:
   Affiliation:
     type: text
-    label: "Your institution/affiliation"
+    label: Your institution/affiliation
     required: true
   Intended Use:
     type: text
-    label: "Intended use of this dataset"
+    label: Intended use of this dataset
     required: true
-extra_gated_prompt: "Please provide your affiliation and intended use to apply for access."
+extra_gated_prompt: Please provide your affiliation and intended use to apply for access.
 ---
 # CMR-MULTI DATASET
 
@@ -23,6 +24,15 @@ extra_gated_prompt: "Please provide your affiliation and intended use to apply f
 https://mwm2026.github.io/cmr-multi
 
 ## Dataset Details
+| View Folder | File Format | Number of Files | Total Z-axis Dimensions |
+|-------------|-------------|-----------------|-------------------------|
+| CINE_MULTI/SAX_TR         | .nii.gz     | 105             | 47758                   |
+| CINE_MULTI/4CH_TR         | .nii.gz     | 105             | 11870                   |
+| CINE_MULTI/2CH_TR          | .nii.gz     | 105             | 12285                   |
+| LGE_MULTI/SAX_TR    | .nii.gz     | 40             | 670                   |
+| LGE_MULTI/4CH_TR      | .nii.gz     | 40             | 201                    |
+| LGE_MULTI/2CH_TR       | .nii.gz     | 40            | 201                  |
+| LGE_MULTI/RAS_TR       | .nii.gz     | 80            | 1111                  |
 
 ### Dataset Description
 
@@ -197,7 +207,7 @@ All data fully de-identified; IRB approved; no patient privacy information inclu
       url={https://arxiv.org/abs/2604.04078}, 
 }
 ```
-
+If you wish to analyze the imaging findings, please refer to our multimodal large language model evaluation dataset at:https://huggingface.co/datasets/TaipingQu/CMRAgentEvalSet
 
 ## Dataset Card Contact
 
